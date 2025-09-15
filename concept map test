@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>개념 맵 도구</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;overflow:hidden;background:#f5f5f5}
+
+    /* 상단 헤더 */
+    header{
+      height:56px;display:flex;align-items:center;justify-content:space-between;
+      padding:8px 12px;background:#111827;color:#e5e7eb;border-bottom:1px solid #1f2937
+    }
+    .btn{background:#0b1323;border:1px solid #374151;color:#e5e7eb;padding:8px 12px;border-radius:10px;cursor:pointer}
+    .btn:hover{border-color:#60a5fa}
+
+    .concept-map-container{display:flex;height:calc(100vh - 56px)}
+    /* 왼쪽 패널 */
+    .concept-panel{
+      width:300px;background:#2c3e50;color:#ecf0f1;padding:16px;overflow:auto;border-right:3px solid #34495e
+    }
+    .concept-panel h3{margin-bottom:12px;text-align:center;border-bottom:2px solid #34495e;padding-bottom:8px}
+    .concept-tags{display:flex;flex-direction:column;gap:8px}
+    .concept-tag{
+      background:#3498db;color:#fff;padding:12px 16px;border-radius:25px;cursor:grab;user-select:none;
+      text-align:center;font-weight:600;transition:.2s;box-shadow:0 2px 4px rgba(0,0,0,.1)
+    }
+    .concept-tag:hover{background:#2980b9;transform:translateY(-1px)}
+    .concept-tag:active{cursor:grabbing;transform:scale(.98);opacity:.85}
+    .concept-tag.used{background:#6b7280;cursor:not-allowed;opacity:.7}
+
+    /* 캔버스 */
+    .canvas-container{flex:1;position:relative;background:linear-gradient(135deg,#667eea 0%, #764ba2 100%)}
+    .canvas{
+      position:relative;width:100%;height:100%;
+      background:
+        radial-gradient(circle at 25% 25%, rgba(255,255,255,.1) 1px, transparent 1px),
+        radial-gradient(circle at 75% 75%, rgba(255,255,255,.1) 1px, transparent 1px);
+      background-size:50px 50px
+    }
+    .connection-svg{position:absolute;inset:0;z-index:1;pointer-events:none}
+    .connection-svg.hidden{display:none} /* 연결 모드 꺼짐일 때 숨김 */
+
+    .placed-tag{
+      position:absolute;background:#e74c3c;color:#fff;padding:10px 15px;border-radius:20px;cursor:pointer;user-select:none;
+      transition:.2s;box-shadow:0 4px 8px rgba(0,0,0,.2);font-weight:600;z-index:2;min-width:90px;text-align:center
+    }
+    .placed-tag:hover{transform:scale(1.03)}
+    .placed-tag.selected{background:#f39c12;border:3px solid #f1c40f}
+
+    /* 다이얼로그 */
+    .dialog-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000}
+    .dialog-overlay.show{display:flex}
+    .dialog{background:#fff;padding:24px;border-radius:14px;box-shadow:0 20px 40px rgba(0,0,0,.3);max-width:520px;width:90%}
+    .dialog h3{margin-bottom:10px;text-align:center}
+    .dialog p{margin:10px 0 18px;color:#6b7280;text-align:center}
+    .selected-concepts{display:flex;justify-content:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+    .selected-concept{background:#3498db;color:#fff;padding:6px 12px;border-radius:12px;font-weight:600}
+    .relationship-buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;margin-bottom:14px}
+    .relationship-buttons button{background:#2ecc71;color:#fff;border:0;padding:10px;border-radius:8px;cursor:pointer;font-weight:600}
+    .relationship-buttons button:hover{background:#27ae60}
+    .dialog-actions{display:flex;justify-content:center;gap:12px}
+    .dialog-actions button{background:#94a3b8;color:#fff;border:0;padding:10px 16px;border-radius:8px;cursor:pointer}
+
+    /* 반응형 */
+    @media (max-width: 860px){
+      .concept-map-container{flex-direction:column}
+      .concept-panel{width:100%;height:200px;order:2}
+      .canvas-container{height:calc(100vh - 56px - 200px);order:1}
+      .concept-tags{flex-direction:row;flex-wrap:wrap;gap:6px}
+      .concept-tag{min-width:86px;padding:8px 12px;font-size:12px}
+    }
+  </style>
+</head>
+<body>
+  <!-- 상단 헤더 -->
+  <header>
+    <div><strong>개념 맵 도구</strong> <span style="font-size:12px;color:#9ca3af;margin-left:8px">개념은 한 번만 사용 가능</span></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="btnConnect">연결 모드: 꺼짐</button>
+      <button class="btn" id="btnExport">JSON 내보내기</button>
+      <button class="btn" id="btnReset">전체 초기화</button>
+    </div>
+  </header>
+
+  <div class="concept-map-container">
+    <!-- 왼쪽 개념 패널 -->
+    <div class="concept-panel">
+      <h3>개념 목록</h3>
+      <div id="conceptTags" class="concept-tags"></div>
+    </div>
+
+    <!-- 오른쪽 캔버스 -->
+    <div class="canvas-container">
+      <div id="canvas" class="canvas">
+        <!-- 연결선 SVG (연결 모드가 꺼지면 hidden 클래스가 붙음) -->
+        <svg id="connectionSvg" class="connection-svg hidden" width="100%" height="100%">
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#4A90E2"/>
+            </marker>
+          </defs>
+        </svg>
+        <!-- 배치된 개념 태그는 JS로 생성 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 관계 정의 다이얼로그 -->
+  <div class="dialog-overlay" id="dialogOverlay">
+    <div class="dialog">
+      <h3>관계 정의</h3>
+      <p>선택한 두 개념 간의 관계를 정의해주세요:</p>
+      <div id="selectedConcepts" class="selected-concepts"></div>
+      <div class="relationship-buttons">
+        <button onclick="createRelationship('포함')">포함</button>
+        <button onclick="createRelationship('구성')">구성</button>
+        <button onclick="createRelationship('연관')">연관</button>
+        <button onclick="createRelationship('대립')">대립</button>
+        <button onclick="createRelationship('유사')">유사</button>
+        <button onclick="createRelationship('원인')">원인</button>
+        <button onclick="createRelationship('결과')">결과</button>
+      </div>
+      <div class="dialog-actions">
+        <button onclick="closeDialog()">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== 상태 =====
+    let draggedConcept = null;
+    let placedTags = [];     // {id, concept, x, y, selected}
+    let selectedTags = [];   // [id, id]
+    let connections = [];    // {id, fromId, toId, relationship}
+    let tagIdCounter = 1;
+    let connectMode = false; // 연결 모드
+
+    // ===== 개념 목록 (저번과 동일 풀셋) =====
+    const concepts = [
+      '자연수','분수','소수','0','덧셈','뺄셈','곱셈','나눗셈','평면도형','입체도형','시간','길이','둘레','부피','들이','무게','각도','넓이','겉넓이','그래프','사건이 일어날 가능성',
+      '약수','공약수','최대공약수','배수','공배수','최소공배수','짝수','홀수',
+      '단위분수','진분수','가분수','대분수','약분','기약분수','통분',
+      '자연수의 덧셈','분수의 덧셈','소수의 덧셈','자연수의 뺄셈','분수의 뺄셈','소수의 뺄셈','자연수의 곱셈','분수의 곱셈','소수의 곱셈','자연수의 나눗셈','분수의 나눗셈','소수의 나눗셈',
+      '이상','이하','초과','미만','어림값','약','올림','버림','반올림',
+      '비','비율','백분율','비례식','비례배분',
+      '원',
+      '삼각형','직각삼각형','이등변삼각형','정삼각형','예각삼각형','둔각삼각형',
+      '사각형','직사각형','정사각형','사다리꼴','평행사변형','마름모',
+      '다각형','정다각형',
+      '합동','대칭','선대칭도형','점대칭도형',
+      '직육면체','정육면체','각기둥','각뿔','원기둥','원뿔','구',
+      '겨냥도','전개도',
+      '평면도형의 둘레','원주','원주율',
+      '직육면체의 부피','정육면체의 부피',
+      '직각','예각','둔각',
+      '평면도형의 넓이','사각형의 넓이','삼각형의 넓이','다각형의 넓이','원의 넓이',
+      '입체도형의 겉넓이','직육면체의 겉넓이','정육면체의 겉넓이',
+      '그림그래프','막대그래프','꺾은선 그래프','띠그래프','원그래프','평균'
+    ];
+
+    // 사용 여부 관리
+    const used = new Set();
+
+    // ===== DOM =====
+    const conceptTagsContainer = document.getElementById('conceptTags');
+    const canvas = document.getElementById('canvas');
+    const connectionSvg = document.getElementById('connectionSvg');
+    const dialogOverlay = document.getElementById('dialogOverlay');
+    const selectedConceptsContainer = document.getElementById('selectedConcepts');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnExport = document.getElementById('btnExport');
+    const btnReset = document.getElementById('btnReset');
+
+    // ===== 초기화 =====
+    document.addEventListener('DOMContentLoaded', () => {
+      renderConceptTags();
+      setupCanvasDnD();
+      setupHeaderButtons();
+    });
+
+    // ===== 개념 태그 렌더링 (1회 사용) =====
+    function renderConceptTags(){
+      conceptTagsContainer.innerHTML = '';
+      concepts.forEach(concept=>{
+        const el = document.createElement('div');
+        el.className = 'concept-tag' + (used.has(concept) ? ' used' : '');
+        el.textContent = concept;
+
+        if(!used.has(concept)){
+          el.draggable = true;
+          el.addEventListener('dragstart', (e)=>{
+            draggedConcept = concept;
+            e.dataTransfer.effectAllowed = 'copy';
+          });
+        }
+        conceptTagsContainer.appendChild(el);
+      });
+    }
+
+    // ===== 캔버스 DnD =====
+    function setupCanvasDnD(){
+      canvas.addEventListener('dragover', e=>e.preventDefault());
+      canvas.addEventListener('drop', e=>{
+        e.preventDefault();
+        if(!draggedConcept || used.has(draggedConcept)) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left - 60; // 중앙 보정
+        const y = e.clientY - rect.top - 20;
+
+        const newTag = { id: tagIdCounter++, concept: draggedConcept, x, y, selected:false };
+        placedTags.push(newTag);
+        used.add(draggedConcept);
+        draggedConcept = null;
+
+        renderConceptTags();
+        createPlacedTagElement(newTag);
+        redrawConnections(); // 위치 기준 업데이트
+      });
+    }
+
+    // ===== 배치된 태그 DOM 생성 =====
+    function createPlacedTagElement(tag){
+      const el = document.createElement('div');
+      el.className = 'placed-tag';
+      el.textContent = tag.concept;
+      el.style.left = tag.x+'px';
+      el.style.top  = tag.y+'px';
+      el.dataset.tagId = tag.id;
+
+      // 클릭 선택
+      el.addEventListener('click', ()=>{
+        handleTagClick(tag.id);
+      });
+
+      // (옵션) 간단한 드래그 이동 — 이동 시 연결선도 갱신
+      makeDraggable(el, (dx,dy)=>{
+        tag.x += dx; tag.y += dy;
+        el.style.left = tag.x+'px';
+        el.style.top  = tag.y+'px';
+        if(connectMode) redrawConnections();
+      });
+
+      canvas.appendChild(el);
+    }
+
+    // 간단 드래그 유틸
+    function makeDraggable(el, onMove){
+      let down=false, sx=0, sy=0;
+      el.addEventListener('mousedown', (e)=>{
+        if(e.button!==0) return;
+        down=true; sx=e.clientX; sy=e.clientY;
+        const mm = (ev)=>{ if(!down) return; const dx=ev.clientX-sx, dy=ev.clientY-sy; sx=ev.clientX; sy=ev.clientY; onMove(dx,dy); };
+        const mu = ()=>{ down=false; document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu); };
+        document.addEventListener('mousemove',mm);
+        document.addEventListener('mouseup',mu);
+      });
+    }
+
+    // ===== 태그 선택/다이얼로그 =====
+    function handleTagClick(tagId){
+      const tag = placedTags.find(t=>t.id===tagId);
+      if(!tag) return;
+
+      tag.selected = !tag.selected;
+      const el = document.querySelector(`[data-tag-id="${tagId}"]`);
+      if(tag.selected){
+        el.classList.add('selected');
+        if(!selectedTags.includes(tagId)) selectedTags.push(tagId);
+      }else{
+        el.classList.remove('selected');
+        selectedTags = selectedTags.filter(id=>id!==tagId);
+      }
+
+      if(selectedTags.length === 2 && connectMode){
+        // 연결 모드일 때만 다이얼로그
+        showDialog();
+      }
+    }
+
+    function showDialog(){
+      selectedConceptsContainer.innerHTML = '';
+      selectedTags.forEach(id=>{
+        const t = placedTags.find(p=>p.id===id);
+        if(!t) return;
+        const s = document.createElement('span');
+        s.className = 'selected-concept';
+        s.textContent = t.concept;
+        selectedConceptsContainer.appendChild(s);
+      });
+      dialogOverlay.classList.add('show');
+    }
+
+    function closeDialog(){
+      dialogOverlay.classList.remove('show');
+      clearSelectionVisual();
+    }
+
+    function clearSelectionVisual(){
+      placedTags.forEach(t=>{
+        t.selected = false;
+        const el = document.querySelector(`[data-tag-id="${t.id}"]`);
+        if(el) el.classList.remove('selected');
+      });
+      selectedTags = [];
+    }
+
+    // ===== 관계/연결 =====
+    function createRelationship(type){
+      if(selectedTags.length!==2) return;
+      const [aId,bId] = selectedTags;
+      connections.push({ id: Date.now(), fromId:aId, toId:bId, relationship:type });
+      closeDialog();
+      if(connectMode) redrawConnections();
+    }
+
+    function redrawConnections(){
+      // 연결 모드가 꺼져 있으면 안 그림
+      if(!connectMode){
+        connectionSvg.classList.add('hidden');
+        connectionSvg.innerHTML = '<defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#4A90E2"/></marker></defs>';
+        return;
+      }
+      connectionSvg.classList.remove('hidden');
+      connectionSvg.innerHTML = '<defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#4A90E2"/></marker></defs>';
+
+      connections.forEach(c=>{
+        const from = placedTags.find(t=>t.id===c.fromId);
+        const to   = placedTags.find(t=>t.id===c.toId);
+        if(!from || !to) return;
+
+        const fromX = from.x + 60, fromY = from.y + 20;
+        const toX   = to.x   + 60, toY   = to.y   + 20;
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+        line.setAttribute('x1', fromX); line.setAttribute('y1', fromY);
+        line.setAttribute('x2', toX);   line.setAttribute('y2', toY);
+        line.setAttribute('stroke', '#e5e7eb');
+        line.setAttribute('stroke-width', '2.5');
+        line.setAttribute('marker-end', 'url(#arrowhead)');
+
+        const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+        label.setAttribute('x', (fromX+toX)/2);
+        label.setAttribute('y', (fromY+toY)/2 - 6);
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('font-size','12');
+        label.setAttribute('fill','#111827');
+        label.textContent = c.relationship;
+
+        connectionSvg.appendChild(line);
+        connectionSvg.appendChild(label);
+      });
+    }
+
+    // ===== 헤더 버튼 =====
+    function setupHeaderButtons(){
+      btnConnect.addEventListener('click', ()=>{
+        connectMode = !connectMode;
+        btnConnect.textContent = '연결 모드: ' + (connectMode ? '켜짐' : '꺼짐');
+        redrawConnections();
+      });
+
+      btnExport.addEventListener('click', ()=>{
+        const data = {
+          nodes: placedTags.map(t=>({id:t.id,concept:t.concept,x:t.x,y:t.y})),
+          links: connections.map(c=>({fromId:c.fromId,toId:c.toId,relationship:c.relationship})),
+          used: Array.from(used),
+          connectMode
+        };
+        const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'concept-map.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+
+      btnReset.addEventListener('click', ()=>{
+        if(!confirm('모든 배치와 연결을 초기화할까요?')) return;
+        draggedConcept=null; placedTags=[]; selectedTags=[]; connections=[]; tagIdCounter=1; connectMode=false;
+        used.clear(); conceptTagsContainer.innerHTML=''; document.querySelectorAll('.placed-tag').forEach(n=>n.remove());
+        renderConceptTags();
+        btnConnect.textContent = '연결 모드: 꺼짐';
+        redrawConnections();
+      });
+    }
+
+    // 오버레이 클릭/ESC로 닫기
+    document.getElementById('dialogOverlay').addEventListener('click', e=>{ if(e.target===e.currentTarget) closeDialog(); });
+    document.addEventListener('keydown', e=>{ if(e.key==='Escape' && dialogOverlay.classList.contains('show')) closeDialog(); });
+  </script>
+</body>
+</html>
