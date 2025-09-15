@@ -4,13 +4,288 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>개념 배치·분류·연결 도구</title>
+  <style>
+    :root{--bg:#0f172a;--panel:#111827;--muted:#1f2937;--line:#374151;--text:#e5e7eb;--sub:#9ca3af;--accent:#60a5fa}
+    *{box-sizing:border-box}
+    body{margin:0;background:#0f172a;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+    .app{display:grid;grid-template-columns:320px 1fr;grid-template-rows:56px 1fr;grid-template-areas:"topbar topbar" "sidebar stage";height:100vh}
+    header{grid-area:topbar;background:#111827;display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--muted)}
+    aside{grid-area:sidebar;background:#1f2937;padding:12px;overflow:auto;border-right:1px solid var(--muted)}
+    .stage{grid-area:stage;position:relative;background:#0b1220;cursor:default}
+    .grid{position:absolute;inset:0;background-image:linear-gradient(#0d162a 1px,transparent 1px),linear-gradient(90deg,#0d162a 1px,transparent 1px);background-size:24px 24px,24px 24px;pointer-events:none}
+
+    /* 개념(좌측 목록) */
+    .concept{display:inline-block;margin:4px;padding:6px 12px;background:#0b253f;border:1px solid #1e3a8a;border-radius:999px;color:#cfe3ff;cursor:grab;user-select:none}
+    .concept.used{background:#374151;border-color:#4b5563;color:#9ca3af;cursor:not-allowed}
+
+    /* 노드(스테이지 위) */
+    .node{position:absolute;min-width:120px;min-height:38px;max-width:280px;background:#0b253f;border:1px solid #1e3a8a;border-radius:12px;padding:8px 12px;color:#dbeafe;cursor:move;user-select:none;display:flex;align-items:center;justify-content:center;text-align:center}
+    .node.selected{outline:2px solid var(--accent)}
+
+    /* 링크(SVG) */
+    svg{position:absolute;inset:0;z-index:20}
+    .link-path{stroke:#64748b;stroke-width:2;fill:none;pointer-events:stroke}
+    .link-hit{stroke:transparent;stroke-width:14;fill:none;pointer-events:stroke}
+    .link.selected .link-path{stroke:var(--accent);stroke-width:3}
+    .link-label{fill:#cbd5e1;font-size:12px;dominant-baseline:central;text-anchor:middle;pointer-events:none}
+
+    .btn{background:#0b1323;border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
+    .btn:hover{border-color:var(--accent)}
+    .hint{font-size:12px;color:var(--sub)}
+  </style>
 </head>
 <body>
-  <h1>패치된 버전</h1>
-  <p>이 버전은 GitHub Pages에서 연결선이 보이지 않는 문제를 고친 index.html입니다.</p>
-  <script>
-  // 간단 테스트용 스크립트
-  document.body.insertAdjacentHTML('beforeend','<p style="color:green">JavaScript 작동 확인됨</p>');
-  </script>
+  <div class="app">
+    <header>
+      <div><strong>개념 배치·분류·연결 도구</strong> <span class="hint">개념은 한 번만 사용 가능</span></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn" id="btnConnect">연결 모드: 꺼짐</button>
+        <button class="btn" id="btnDelete">선택 삭제</button>
+        <button class="btn" id="btnExport">JSON 내보내기</button>
+      </div>
+    </header>
+    <aside>
+      <h3 style="margin:6px 0">개념 목록</h3>
+      <div id="conceptList"></div>
+      <p class="hint">개념을 드래그해 스테이지에 놓으면 그 개념은 회색으로 바뀌고 더 이상 사용할 수 없다</p>
+      <p class="hint">연결 모드에서 노드 두 개를 차례로 클릭하면 라벨을 입력해 연결선을 만든다. 링크 더블클릭으로 라벨 수정</p>
+      <p class="hint">선택 후 Delete 키로도 삭제 가능</p>
+    </aside>
+    <div class="stage" id="stage">
+      <div class="grid"></div>
+      <svg id="linkLayer"></svg>
+      <div id="contentLayer" style="position:absolute; inset:0; z-index:10;"></div>
+    </div>
+  </div>
+
+<script>
+// ---- 기본 개념 목록(사용자 지정 버전) ----
+const defaultConcepts = [
+  '자연수','분수','소수','0','덧셈','뺄셈','곱셈','나눗셈','평면도형','입체도형','시간','길이','둘레','부피','들이','무게','각도','넓이','겉넓이','그래프','사건이 일어날 가능성',
+  '약수','공약수','최대공약수','배수','공배수','최소공배수','짝수','홀수',
+  '단위분수','진분수','가분수','대분수','약분','기약분수','통분',
+  '자연수의 덧셈','분수의 덧셈','소수의 덧셈','자연수의 뺄셈','분수의 뺄셈','소수의 뺄셈','자연수의 곱셈','분수의 곱셈','소수의 곱셈','자연수의 나눗셈','분수의 나눗셈','소수의 나눗셈',
+  '이상','이하','초과','미만','어림값','약','올림','버림','반올림',
+  '비','비율','백분율','비례식','비례배분',
+  '원',
+  '삼각형','직각삼각형','이등변삼각형','정삼각형','예각삼각형','둔각삼각형',
+  '사각형','직사각형','정사각형','사다리꼴','평행사변형','마름모',
+  '다각형','정다각형',
+  '합동','대칭','선대칭도형','점대칭도형',
+  '직육면체','정육면체','각기둥','각뿔','원기둥','원뿔','구',
+  '겨냥도','전개도',
+  '평면도형의 둘레','원주','원주율',
+  '직육면체의 부피','정육면체의 부피',
+  '직각','예각','둔각',
+  '평면도형의 넓이','사각형의 넓이','삼각형의 넓이','다각형의 넓이','원의 넓이',
+  '입체도형의 겉넓이','직육면체의 겉넓이','정육면체의 겉넓이',
+  '그림그래프','막대그래프','꺾은선 그래프','띠그래프','원그래프','평균'
+];
+
+// ---- 상태 ----
+const state = { nodes: [], links: [], used: new Set(), connectMode: false, pending:null, selected:null };
+
+// ---- 요소 ----
+const conceptList = document.getElementById('conceptList');
+const stage = document.getElementById('stage');
+const contentLayer = document.getElementById('contentLayer');
+const linkLayer = document.getElementById('linkLayer');
+
+// ---- 유틸 ----
+const uid = () => Math.random().toString(36).slice(2,9);
+const $ = (sel,el=document)=>el.querySelector(sel);
+const $$ = (sel,el=document)=>Array.from(el.querySelectorAll(sel));
+
+// ---- 개념 렌더링 ----
+function renderConcepts(){
+  conceptList.innerHTML='';
+  defaultConcepts.forEach(c=>{
+    const el=document.createElement('div');
+    el.className='concept'+(state.used.has(c)?' used':'');
+    el.textContent=c;
+    if(!state.used.has(c)){
+      el.draggable=true;
+      el.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/plain',c); });
+    }
+    conceptList.appendChild(el);
+  });
+}
+renderConcepts();
+
+// ---- 드롭으로 노드 생성 (개념 1회 사용) ----
+stage.addEventListener('dragover',e=>e.preventDefault());
+stage.addEventListener('drop',e=>{
+  e.preventDefault();
+  const text=e.dataTransfer.getData('text/plain');
+  if(!text || state.used.has(text)) return;
+  const id=createNode(text, e.offsetX-70, e.offsetY-22);
+  state.used.add(text);
+  renderConcepts();
+  measureNode(id); drawLinks();
+});
+
+function createNode(label,x,y){
+  const id=uid();
+  const n={id,label,x,y,w:120,h:38}; // 기본값(측정 전)
+  state.nodes.push(n);
+  const el=document.createElement('div');
+  el.className='node'; el.dataset.id=id; el.textContent=label;
+  el.style.left=x+"px"; el.style.top=y+"px";
+
+  // 드래그 이동
+  makeDraggable(el,(dx,dy)=>{ n.x+=dx; n.y+=dy; el.style.left=n.x+"px"; el.style.top=n.y+"px"; drawLinks(); });
+
+  // 선택 및 연결 클릭
+  el.addEventListener('mousedown',()=>{ selectItem('node',id); });
+  el.addEventListener('click',()=>{ if(state.connectMode) handleConnectClick(id); });
+
+  contentLayer.appendChild(el);
+  return id;
+}
+
+function measureNode(id){
+  const n = state.nodes.find(k=>k.id===id); if(!n) return;
+  const el = $(`.node[data-id="${id}"]`, contentLayer); if(!el) return;
+  const r = el.getBoundingClientRect();
+  n.w = r.width; n.h = r.height;
+}
+
+// 재구성용
+function createNodeDOMOnly(n){
+  const el=document.createElement('div');
+  el.className='node'; el.dataset.id=n.id; el.textContent=n.label;
+  el.style.left=n.x+"px"; el.style.top=n.y+"px";
+  makeDraggable(el,(dx,dy)=>{ n.x+=dx; n.y+=dy; el.style.left=n.x+"px"; el.style.top=n.y+"px"; drawLinks(); });
+  el.addEventListener('mousedown',()=>{ selectItem('node',n.id); });
+  el.addEventListener('click',()=>{ if(state.connectMode) handleConnectClick(n.id); });
+  contentLayer.appendChild(el);
+  measureNode(n.id);
+}
+
+// ---- 선택 공통 ----
+function selectItem(type,id){
+  state.selected={type,id};
+  $$('.node',contentLayer).forEach(n=>n.classList.remove('selected'));
+  $$('.link',linkLayer).forEach(g=>g.classList.remove('selected'));
+  if(type==='node'){ const el=$(`.node[data-id="${id}"]`,contentLayer); if(el) el.classList.add('selected'); }
+  if(type==='link'){ const el=$(`.link[data-id="${id}"]`,linkLayer); if(el) el.classList.add('selected'); }
+}
+
+// ---- 연결 ----
+function handleConnectClick(targetId){
+  if(!state.pending){
+    state.pending=targetId; // 시작 노드 선택
+  }else{
+    if(state.pending!==targetId){
+      const label=prompt('연결 라벨을 입력(선택)');
+      addLink(state.pending,targetId,label||'');
+    }
+    state.pending=null;
+  }
+}
+
+function addLink(a,b,label=''){
+  if(state.links.some(l=> (l.a===a&&l.b===b) || (l.a===b&&l.b===a))) return; // 중복 방지(무방향)
+  state.links.push({id:uid(), a,b,label});
+  drawLinks();
+}
+
+function drawLinks(){
+  linkLayer.innerHTML='';
+  // 화살표 마커
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  const marker = document.createElementNS('http://www.w3.org/2000/svg','marker');
+  marker.setAttribute('id','arrow'); marker.setAttribute('markerWidth','10'); marker.setAttribute('markerHeight','10');
+  marker.setAttribute('refX','10'); marker.setAttribute('refY','3'); marker.setAttribute('orient','auto');
+  const ap = document.createElementNS('http://www.w3.org/2000/svg','path'); ap.setAttribute('d','M0,0 L10,3 L0,6 Z'); ap.setAttribute('fill','#64748b');
+  marker.appendChild(ap); defs.appendChild(marker); linkLayer.appendChild(defs);
+
+  state.links.forEach(l=>{
+    const n1 = state.nodes.find(n=>n.id===l.a);
+    const n2 = state.nodes.find(n=>n.id===l.b);
+    if(!n1||!n2) return;
+    const x1 = n1.x + n1.w/2, y1 = n1.y + n1.h/2;
+    const x2 = n2.x + n2.w/2, y2 = n2.y + n2.h/2;
+    const dx=(x2-x1), dy=(y2-y1);
+    const c1=`${x1+dx*0.25} ${y1}`; const c2=`${x1+dx*0.75} ${y1+dy}`;
+
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','link'); g.dataset.id=l.id;
+
+    const d = `M ${x1} ${y1} C ${c1}, ${c2}, ${x2} ${y2}`;
+
+    const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
+    hit.setAttribute('d', d); hit.setAttribute('class','link-hit');
+
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', d); path.setAttribute('class','link-path');
+    path.setAttribute('marker-end','url(#arrow)');
+
+    const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', x1+dx*0.5); label.setAttribute('y', y1+dy*0.5);
+    label.setAttribute('class','link-label'); label.textContent = l.label || '';
+
+    const selectHandler = (e)=>{ selectItem('link', l.id); e.stopPropagation(); };
+    hit.addEventListener('mousedown', selectHandler);
+    path.addEventListener('mousedown', selectHandler);
+
+    g.addEventListener('dblclick', (e)=>{
+      selectItem('link', l.id);
+      const name = prompt('연결 라벨을 입력', l.label||'');
+      if(name!==null){ l.label=name; drawLinks(); }
+      e.stopPropagation();
+    });
+
+    g.appendChild(hit); g.appendChild(path); g.appendChild(label);
+    linkLayer.appendChild(g);
+  });
+}
+
+// ---- 삭제 ----
+function deleteSelected(){
+  if(!state.selected) return;
+  const {type,id} = state.selected;
+  if(type==='node'){
+    state.nodes = state.nodes.filter(n=>n.id!==id);
+    state.links = state.links.filter(l=> l.a!==id && l.b!==id);
+  } else if(type==='link'){
+    state.links = state.links.filter(l=>l.id!==id);
+  }
+  state.selected=null;
+  // DOM 재구성
+  contentLayer.innerHTML='';
+  state.nodes.forEach(n=>createNodeDOMOnly(n));
+  drawLinks();
+}
+
+document.getElementById('btnDelete').addEventListener('click', deleteSelected);
+document.addEventListener('keydown', e=>{ if(e.key==='Delete' || e.key==='Backspace'){ deleteSelected(); } });
+
+// ---- 드래그 공통 ----
+function makeDraggable(el,onMove){
+  let sx=0, sy=0, down=false;
+  function mm(e){ if(!down) return; const dx=e.clientX-sx, dy=e.clientY-sy; sx=e.clientX; sy=e.clientY; onMove(dx,dy); }
+  function mu(){ down=false; document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu); }
+  el.addEventListener('mousedown',e=>{ if(e.button!==0) return; down=true; sx=e.clientX; sy=e.clientY; document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu); });
+}
+
+// ---- 버튼 ----
+document.getElementById('btnConnect').addEventListener('click',()=>{
+  state.connectMode=!state.connectMode; state.pending=null;
+  document.getElementById('btnConnect').textContent='연결 모드: '+(state.connectMode?'켜짐':'꺼짐');
+});
+
+document.getElementById('btnExport').addEventListener('click',()=>{
+  const nodes=state.nodes.map(n=>({id:n.id,label:n.label,x:n.x,y:n.y,w:n.w,h:n.h}));
+  const links=state.links.map(l=>({id:l.id,a:l.a,b:l.b,label:l.label}));
+  const data={nodes,links,used:Array.from(state.used)};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='concept-map.json'; a.click(); URL.revokeObjectURL(a.href);
+});
+
+// 초기 로드/리사이즈 시 선 다시 그리기(안전장치)
+window.addEventListener('load', ()=>{ state.nodes.forEach(n=>measureNode(n.id)); drawLinks(); });
+window.addEventListener('resize', ()=>{ state.nodes.forEach(n=>measureNode(n.id)); drawLinks(); });
+</script>
 </body>
 </html>
